@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Singou Magic Wheel — Admin 🐧</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --cream:#FBF8F5; --pink:#E8709E; --mint:#A9E6CE; --gold:#F3C94E;
+  --plum:#3B2440; --plum-soft:#6B5570; --paper:#FFFFFF; --line:#EFE7E2;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--cream);color:var(--plum);font-family:'Nunito',sans-serif;padding:24px 16px 60px;}
+.wrap{max-width:640px;margin:0 auto;}
+h1{font-family:'Baloo 2',sans-serif;font-size:1.5rem;color:var(--pink);margin:0 0 4px;}
+.sub{color:var(--plum-soft);font-size:0.85rem;margin:0 0 24px;}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:16px;}
+.card h2{font-family:'Baloo 2',sans-serif;font-size:1rem;margin:0 0 12px;color:var(--plum);}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.stat{background:var(--cream);border-radius:10px;padding:10px 12px;}
+.stat .label{font-size:0.72rem;color:var(--plum-soft);}
+.stat .value{font-size:1.15rem;font-weight:700;}
+table{width:100%;border-collapse:collapse;font-size:0.82rem;}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);}
+th{color:var(--plum-soft);font-weight:700;font-size:0.72rem;text-transform:uppercase;}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;}
+.pill.ok{background:var(--mint);}
+.pill.wait{background:var(--gold);}
+.pill.none{background:var(--line);color:var(--plum-soft);}
+.secret{background:#fff7e6;border:1px dashed var(--gold);border-radius:10px;padding:10px 12px;font-size:0.82rem;margin-top:8px;}
+.secret b{display:block;font-size:0.7rem;text-transform:uppercase;color:#a07d1f;margin-bottom:4px;}
+.empty{color:var(--plum-soft);font-size:0.85rem;font-style:italic;}
+.err{color:#b3413a;font-size:0.85rem;}
+.cfg-note{font-size:0.78rem;color:var(--plum-soft);background:var(--cream);border-radius:10px;padding:10px 12px;}
+code{background:var(--cream);padding:1px 5px;border-radius:4px;font-size:0.82em;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Singou Magic Wheel — Admin 🐧</h1>
+  <p class="sub" id="statusLine">Chargement...</p>
+  <p class="sub" style="margin-top:-18px;">Actualisation automatique toutes les 15 secondes.</p>
+
+  <div class="card" id="cfgCard">
+    <h2>Connexion Supabase</h2>
+    <p class="cfg-note">Renseigne <code>SUPABASE.url</code>, <code>SUPABASE.anonKey</code> et <code>SUPABASE.playerId</code> dans ce fichier — ce sont les mêmes valeurs que dans <code>index.html</code>. Cette page ne lit rien en localStorage : elle affiche uniquement ce qui a été synchronisé vers Supabase.</p>
+  </div>
+
+  <div id="content"></div>
+</div>
+
+<script>
+// ---- à remplir toi-même, mêmes valeurs que CONFIG.supabase dans index.html ----
+const SUPABASE = {
+  url: "https://xpnftogvdskwsssmyfyl.supabase.co",
+  anonKey: "sb_publishable_CA14OOu2s13S_S6vDfyRwQ_IRPo_-G9",
+  playerId: "singou-main"
+};
+
+// petites copies locales des libellés, pour affichage seulement — à garder
+// alignées avec index.html si tu changes les défis / la séquence niveau 1
+const CHALLENGES = [
+  { id:"c1", label:"Faire 3 plaques de chaque côté au hip thrust — 12 reps clean" },
+  { id:"c2", label:"Chambre clean + canapé clean + 0 valise qui traîne" },
+  { id:"c3", label:"Trouver son Master" }
+];
+const LEVEL1_SEQUENCE = ["reel_fun_1","cadeau_utile_1","reel_fun_2","impression_3d","surprise_utile_1","reel_fun_3"];
+const LEVEL1_LABELS = {
+  reel_fun_1:"Un Reel fun", cadeau_utile_1:"Un cadeau utile", reel_fun_2:"Un autre Reel fun",
+  impression_3d:"Une impression 3D surprise", surprise_utile_1:"Une surprise utile", reel_fun_3:"Un Reel fun"
+};
+const SCHEDULED_DATES = ["2026-09-18","2026-10-03"];
+const LEVEL2_DATE = "2026-10-04";
+const CHALLENGES_UNLOCK = "2026-09-15";
+const REACTION_EMOJI = { adore:"❤️", fume:"😂", bof:"😐" };
+
+const statusLine = document.getElementById("statusLine");
+const content = document.getElementById("content");
+
+function fmt(ts){
+  if(!ts) return "—";
+  return new Date(ts).toLocaleString("fr-FR", { dateStyle:"short", timeStyle:"short" });
+}
+function isoToday(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function isPastOrToday(iso){
+  const [y,m,d] = iso.split("-").map(Number);
+  const target = new Date(y,m-1,d);
+  const today = new Date(); today.setHours(0,0,0,0);
+  return today >= target;
+}
+function nextDeadline(){
+  const items = [
+    {label:"Défis débloqués", date:CHALLENGES_UNLOCK},
+    {label:"Spin programmé", date:SCHEDULED_DATES[0]},
+    {label:"Spin programmé", date:SCHEDULED_DATES[1]},
+    {label:"Niveau 2", date:LEVEL2_DATE}
+  ];
+  const next = items.find(i=>!isPastOrToday(i.date));
+  return next ? next.label + " — " + next.date : "aucune échéance restante";
+}
+
+async function load(){
+  if(!SUPABASE.url || !SUPABASE.anonKey){
+    statusLine.textContent = "Configuration manquante.";
+    content.innerHTML = '<div class="card"><p class="err">Renseigne SUPABASE.url et SUPABASE.anonKey en haut de ce fichier pour afficher les données.</p></div>';
+    return;
+  }
+  try{
+    const res = await fetch(
+      SUPABASE.url + "/rest/v1/singou_progress?player_id=eq." + encodeURIComponent(SUPABASE.playerId) + "&select=state,updated_at",
+      { headers:{ apikey: SUPABASE.anonKey, Authorization:"Bearer " + SUPABASE.anonKey } }
+    );
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    const rows = await res.json();
+    if(!rows || !rows[0]){
+      statusLine.textContent = "Aucune donnée synchronisée pour l'instant.";
+      content.innerHTML = '<div class="card"><p class="empty">Elle n\'a pas encore joué, ou Supabase n\'est pas encore activé côté index.html.</p></div>';
+      return;
+    }
+    render(rows[0].state, rows[0].updated_at);
+  }catch(e){
+    statusLine.textContent = "Erreur de connexion à Supabase.";
+    content.innerHTML = '<div class="card"><p class="err">'+ (e.message||"Erreur inconnue") +'</p></div>';
+  }
+}
+
+function render(state, updatedAt){
+  statusLine.textContent = "Dernière synchro : " + fmt(updatedAt);
+
+  const spinsAvailable = (state.spinQueue||[]).length;
+  const spinsDone = (state.wonHistory||[]).length;
+  const level1Progress = (state.level1SeqIndex||0) + " / " + LEVEL1_SEQUENCE.length;
+  const lastActivity = (state.activityLog && state.activityLog.length)
+    ? fmt(state.activityLog[state.activityLog.length-1].at) + " — " + state.activityLog[state.activityLog.length-1].label
+    : "—";
+
+  let html = "";
+
+  html += '<div class="card"><h2>Vue d\'ensemble</h2><div class="grid">'
+    + stat("Niveau actuel", state.activeLevelId||1)
+    + stat("Spins disponibles", spinsAvailable)
+    + stat("Spins effectués", spinsDone)
+    + stat("Progression niveau 1", level1Progress)
+    + stat("Dernière activité", lastActivity)
+    + stat("Prochaine échéance", nextDeadline())
+    + '</div></div>';
+
+  if(state.pendingSpin){
+    html += '<div class="card"><h2>⏳ Tirage en attente</h2>'
+      + '<p>Lot : <b>' + (state.pendingSpin.prizeId||"?") + '</b> — Niveau ' + state.pendingSpin.levelId
+      + ' — origine : ' + state.pendingSpin.origin + ' — créé le ' + fmt(state.pendingSpin.createdAt)
+      + '<br><span class="empty">Sera finalisé automatiquement à sa prochaine ouverture de page.</span></p></div>';
+  }
+
+  html += '<div class="card"><h2>Défis</h2><table><tr><th>Défi</th><th>Statut</th></tr>';
+  CHALLENGES.forEach(c=>{
+    const credited = (state.creditedChallenges||[]).includes(c.id);
+    const submitted = (state.submittedChallenges||[]).includes(c.id);
+    let pill = credited ? '<span class="pill ok">Validé ✓</span>' : submitted ? '<span class="pill wait">Preuve envoyée</span>' : '<span class="pill none">Non envoyé</span>';
+    html += '<tr><td>'+c.label+'</td><td>'+pill+'</td></tr>';
+  });
+  html += '</table></div>';
+
+  const history = (state.wonHistory||[]).slice().reverse();
+  html += '<div class="card"><h2>Historique des lots</h2>';
+  if(!history.length){
+    html += '<p class="empty">Aucun spin pour l\'instant.</p>';
+  } else {
+    html += '<table><tr><th>Lot</th><th>Type</th><th>Origine</th><th>Date</th><th>Réclamé</th><th>Feedback</th></tr>';
+    history.forEach(h=>{
+      const reaction = state.reactions ? state.reactions[h.historyEntryId] : null;
+      const claimedPill = h.type==="cadeau" ? (h.claimed ? '<span class="pill ok">Réclamé</span>' : '<span class="pill wait">Non réclamé</span>') : "—";
+      html += '<tr><td>'+h.emoji+' '+h.label+'</td><td>'+h.type+'</td><td>'+(h.origin||"—")+'</td><td>'+fmt(h.wonAt)+'</td><td>'+claimedPill+'</td><td>'+(reaction?REACTION_EMOJI[reaction]||reaction:"—")+'</td></tr>';
+    });
+    html += '</table>';
+  }
+  html += '</div>';
+
+  // section discrète, admin seulement
+  let secretLine = "Niveau 1 déjà terminé ou plus actif.";
+  if((state.activeLevelId||1) === 1){
+    const idx = state.level1SeqIndex||0;
+    if(idx < LEVEL1_SEQUENCE.length){
+      const nextId = LEVEL1_SEQUENCE[idx];
+      secretLine = "Prochain tirage programmé (niveau 1) : " + (LEVEL1_LABELS[nextId] || nextId) + " (" + nextId + ")";
+    } else {
+      secretLine = "Séquence des 6 lots épuisée — les prochains tirages seront aléatoires parmi les lots du niveau.";
+    }
+  }
+  html += '<div class="secret"><b>Prochain résultat programmé — admin seulement</b>' + secretLine + '</div>';
+
+  content.innerHTML = html;
+}
+
+function stat(label, value){
+  return '<div class="stat"><div class="label">'+label+'</div><div class="value">'+value+'</div></div>';
+}
+
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>
